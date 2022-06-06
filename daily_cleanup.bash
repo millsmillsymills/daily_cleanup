@@ -2,15 +2,7 @@
 ##CONFIGURABLES#############################################################################################################
 
 #MacOS username
-username=andrew.mills
-#Where you want the backup folder located
-archive_location=/Users/"$username"/Archives
-#Today's backup
-backup_location="$backup_location"/"$date"
-#MacOS user home folder location
-user_location=/Users/"$username"
-#Date used to create daily folders
-date=$(date '+%Y.%m.%d')
+username=changeme
 #Each entry will have a dedicated folder within the backup folder
 directories=( binaries audio video archives text three_dee images utilities web directories) 
 #Folders and the file extensions that go into them
@@ -22,6 +14,16 @@ text=( json txt doc docx xls xlsx ppt pptx keynote pages numbers pdf epub mobi r
 three_dee=( blend stl 3mf collada 3ds step vrml x3d)
 images=( jpeg jpg JPG png psd gif aep nef NEF svg)
 utilities=( csv log cer crt gpg mobileconfig asc ovpn rdp unf ttf ovpn)
+
+#Where you want the backup folder located
+archive_location=/Users/"$username"/Archives
+#Today's backup
+backup_location="$backup_location"/"$date"
+#MacOS user home folder location
+user_location=/Users/"$username"
+#Date format used to create daily folders
+date=$(date '+%Y.%m.%d')
+
 
 ##VARIABLES#################################################################################################################
 
