@@ -1,19 +1,22 @@
 #!/bin/bash
-##CONFIGURABLES#############################################################################################################
 
+##CONFIGURABLES###############
 #MacOS username
 username=changeme
+
 #Each entry will have a dedicated folder within the backup folder
-directories=( binaries audio video archives text three_dee images utilities web directories) 
+directories=( binaries audio video archives text three_dee images utilities web virtual_machines directories) 
+
 #Folders and the file extensions that go into them
 binaries=( dmg app pkg exe deb safariextz)
 audio=( mp3 aac)
 video=( mkv mp4 mpeg avi m4v mov webp)
-archives=( zip tar gz 7zip tgz iso xz html)
+archives=( zip tar gz 7zip tgz iso xz html 7z)
 text=( json txt doc docx xls xlsx ppt pptx keynote pages numbers pdf epub mobi rtf srt)
-three_dee=( blend stl 3mf collada 3ds step vrml x3d)
+three_dee=( blend stl 3mf collada 3ds step vrml x3d fdg)
 images=( jpeg jpg JPG png psd gif aep nef NEF svg)
 utilities=( csv log cer crt gpg mobileconfig asc ovpn rdp unf ttf ovpn)
+virtual_machines=( vmwarevm vmx vmfs vmdk nvram vmem vmsn vmsd ova ovf)
 
 #Where you want the backup folder located
 archive_location=/Users/"$username"/Archives
@@ -60,8 +63,8 @@ init_web_backup() {
 
 #Find and move directories
 init_directory_backup() {
-    mv "$user_location/Downloads/*/" "$backup_location"/directories/ 2> /dev/null
-    mv "$user_location/Desktop/*/" "$backup_location"/directories/ 2> /dev/null
+    find $user_location/Desktop/* -type d -exec mv {} "$backup_location"/directories \;
+    find $user_location/Downloads/* -type d -exec mv {} "$backup_location"/directories \;
 }
 
 #Begin file moves 
@@ -110,6 +113,12 @@ init_backup() {
 
 #Find and move utility files as defined in the utilities variable
     for i in "${utilities[@]}"; do
+        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
+        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
+    done
+
+#Find and move virtual machine files as defined in the utilities variable
+    for i in "${virtual_machines[@]}"; do
         mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
         mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
     done
