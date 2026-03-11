@@ -1,129 +1,178 @@
 #!/bin/bash
+set -euo pipefail
+shopt -s nullglob nocaseglob
 
 ##CONFIGURABLES###############
-#MacOS username
 username=changeme
 
-#Each entry will have a dedicated folder within the backup folder
-directories=( binaries audio video archives text three_dee images utilities web virtual_machines directories) 
+# File extensions per category
+# shellcheck disable=SC2034
+binaries=(dmg app pkg exe deb safariextz)
+# shellcheck disable=SC2034
+audio=(mp3 aac)
+# shellcheck disable=SC2034
+video=(mkv mp4 mpeg avi m4v mov)
+# shellcheck disable=SC2034
+archives=(zip tar gz 7zip tgz iso xz 7z)
+# shellcheck disable=SC2034
+text=(json txt doc docx xls xlsx ppt pptx keynote pages numbers pdf epub mobi rtf srt html)
+# shellcheck disable=SC2034
+three_dee=(blend stl 3mf collada 3ds step vrml x3d fdg)
+# shellcheck disable=SC2034
+images=(jpeg jpg png psd gif aep nef svg webp)
+# shellcheck disable=SC2034
+utilities=(csv log cer crt gpg mobileconfig asc ovpn rdp unf ttf)
+# shellcheck disable=SC2034
+virtual_machines=(vmwarevm vmx vmfs vmdk nvram vmem vmsn vmsd ova ovf)
 
-#Folders and the file extensions that go into them
-binaries=( dmg app pkg exe deb safariextz)
-audio=( mp3 aac)
-video=( mkv mp4 mpeg avi m4v mov webp)
-archives=( zip tar gz 7zip tgz iso xz html 7z)
-text=( json txt doc docx xls xlsx ppt pptx keynote pages numbers pdf epub mobi rtf srt)
-three_dee=( blend stl 3mf collada 3ds step vrml x3d fdg)
-images=( jpeg jpg JPG png psd gif aep nef NEF svg)
-utilities=( csv log cer crt gpg mobileconfig asc ovpn rdp unf ttf ovpn)
-virtual_machines=( vmwarevm vmx vmfs vmdk nvram vmem vmsn vmsd ova ovf)
+# Each entry gets a subdirectory; web and directories are handled separately from extension-based categories
+categories=(binaries audio video archives text three_dee images utilities virtual_machines web directories)
 
-#Where you want the backup folder located
-archive_location=/Users/"$username"/Archives
-#Today's backup
-backup_location="$backup_location"/"$date"
-#MacOS user home folder location
+backup_date=$(date '+%Y.%m.%d')
+
 user_location=/Users/"$username"
-#Date format used to create daily folders
-date=$(date '+%Y.%m.%d')
+archive_location="$user_location"/Archives
+daily_dir="$archive_location"/"$backup_date"
 
+source_dirs=("$user_location/Desktop" "$user_location/Downloads")
 
-##VARIABLES#################################################################################################################
+##VARIABLES###################
 
+chrome_sql="$user_location/Library/Application Support/Google/Chrome/Default/History"
+firefox_profile_dir="$user_location/Library/Application Support/Firefox/Profiles"
 
-#Web data Locations
-#Chrome SQL location
-chrome_sql="$user_location"/Library/Application\ Support/Google/Chrome/Default/History
-#Firefox SQL location and profile name. Variable finds Firefox profile folder that used in the last 24 hours
-firefox_profile=$(find "$user_location"/Library/Application\ Support/Firefox/Profiles -maxdepth 1 -mtime -1)
+##FUNCTIONS###################
 
-#Functions####################################################################################################################
+validate() {
+	if [[ "$username" == "changeme" ]] || [[ ! -d "/Users/$username" ]]; then
+		echo "ERROR: Set 'username' to your macOS username in daily_cleanup.bash" >&2
+		exit 1
+	fi
 
-#Transform filenames in ~/Downloads and ~/Desktop to lowercase
+	if ! command -v mmv &>/dev/null; then
+		echo "ERROR: mmv is not installed. Install with: brew install mmv" >&2
+		exit 1
+	fi
+
+	if ! command -v sqlite3 &>/dev/null; then
+		echo "ERROR: sqlite3 is not installed" >&2
+		exit 1
+	fi
+}
+
+# Lowercase all filenames (best-effort on case-insensitive macOS where globs already match any case)
 init_transform() {
-    /usr/local/bin/mmv -r "$user_location/Desktop/*" '#l1'
-    /usr/local/bin/mmv -r "$user_location/Downloads/*" '#l1'
+	for dir in "${source_dirs[@]}"; do
+		local -a dir_files=("$dir"/*)
+		if [[ ${#dir_files[@]} -gt 0 ]]; then
+			mmv -r "$dir/*" '#l1' 2>/dev/null ||
+				echo "WARNING: Could not lowercase filenames in $dir (may be case-insensitive FS)" >&2
+		fi
+	done
 }
 
-#Create backup location, daily directory and subdirectories
 stage_backup() {
-    for i in "${directories[@]}"; do 
-        mkdir -p "$archive_location"/"$date"/"${i}"
-    done
+	for i in "${categories[@]}"; do
+		if ! mkdir -p "$daily_dir/${i}"; then
+			echo "ERROR: Failed to create directory: $daily_dir/${i}" >&2
+			exit 1
+		fi
+	done
 }
 
-#Kill browser processes and archive browsing history
+# Send SIGTERM and wait for the process to exit (up to 10s)
+kill_browser() {
+	local process_name=$1
+	if pgrep -x "$process_name" >/dev/null 2>&1; then
+		if killall "$process_name" 2>/dev/null; then
+			for _ in $(seq 1 10); do
+				pgrep -x "$process_name" >/dev/null 2>&1 || break
+				sleep 1
+			done
+		fi
+	fi
+}
+
+# Kill browser processes and export today's browsing history to CSV
 init_web_backup() {
-#Kill Chrome to unlock database and extract browsing history
-    killall Google\ Chrome && sleep 5 && sqlite3 -csv -header "$chrome_sql" "SELECT urls.id, urls.url, urls.title, urls.visit_count, urls.typed_count, datetime((urls.last_visit_time/1000000)-11644473600, 'unixepoch', 'localtime') AS last_visit_time, urls.hidden, datetime((visits.visit_time/1000000)-11644473600, 'unixepoch', 'localtime') AS visit_time, visits.from_visit, visits.visit_duration, visits.transition, visit_source.source FROM urls JOIN visits ON urls.id = visits.url LEFT JOIN visit_source ON visits.id = visit_source.id order by last_visit_time asc;" | grep "$(date '+%Y-%m-%d')" > "$archive_location"/"$date"/web/chrome_history.csv          
+	kill_browser "Google Chrome"
 
-#Kill Firefox to unlock database and extract browsing history
-    killall firefox && sleep 5 && sqlite3 "$firefox_profile"/places.sqlite "SELECT strftime('$(date '+%d.%m.%Y') %H:%M:%S', visit_date/1000000, 'unixepoch', 'localtime'),url FROM moz_places, moz_historyvisits WHERE moz_places.id = moz_historyvisits.place_id ORDER BY visit_date;" > "$archive_location"/"$date"/web/firefox_history.csv
+	if [[ -f "$chrome_sql" ]]; then
+		if sqlite3 -csv -header "$chrome_sql" \
+			"SELECT urls.id, urls.url, urls.title, urls.visit_count, urls.typed_count, \
+			datetime((urls.last_visit_time/1000000)-11644473600, 'unixepoch', 'localtime') AS last_visit_time, \
+			urls.hidden, \
+			datetime((visits.visit_time/1000000)-11644473600, 'unixepoch', 'localtime') AS visit_time, \
+			visits.from_visit, visits.visit_duration, visits.transition, visit_source.source \
+			FROM urls JOIN visits ON urls.id = visits.url \
+			LEFT JOIN visit_source ON visits.id = visit_source.id \
+			WHERE datetime((urls.last_visit_time/1000000)-11644473600, 'unixepoch', 'localtime') >= date('now', 'localtime') \
+			ORDER BY last_visit_time ASC;" \
+			>"$daily_dir/web/chrome_history.csv"; then
+			if [[ ! -s "$daily_dir/web/chrome_history.csv" ]]; then
+				echo "WARNING: No Chrome history found for today" >&2
+			fi
+		else
+			echo "WARNING: Failed to read Chrome history database — is Chrome fully closed?" >&2
+		fi
+	else
+		echo "WARNING: Chrome history database not found" >&2
+	fi
+
+	kill_browser "firefox"
+
+	if [[ -d "$firefox_profile_dir" ]]; then
+		firefox_profile=$(find "$firefox_profile_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)
+		if [[ -n "$firefox_profile" ]] && [[ -f "$firefox_profile/places.sqlite" ]]; then
+			sqlite3 "$firefox_profile/places.sqlite" \
+				"SELECT strftime('%d.%m.%Y %H:%M:%S', visit_date/1000000, 'unixepoch', 'localtime'), url \
+				FROM moz_places, moz_historyvisits \
+				WHERE moz_places.id = moz_historyvisits.place_id \
+				AND visit_date > strftime('%s','now','start of day','localtime') * 1000000 \
+				ORDER BY visit_date;" \
+				>"$daily_dir/web/firefox_history.csv" ||
+				echo "WARNING: Failed to extract Firefox history from $firefox_profile/places.sqlite — is Firefox fully closed?" >&2
+		else
+			echo "WARNING: No Firefox profile found" >&2
+		fi
+	else
+		echo "WARNING: Firefox profiles directory not found" >&2
+	fi
 }
 
-#Find and move directories
 init_directory_backup() {
-    find $user_location/Desktop/* -type d -exec mv {} "$backup_location"/directories \;
-    find $user_location/Downloads/* -type d -exec mv {} "$backup_location"/directories \;
+	for src in "${source_dirs[@]}"; do
+		for dir in "$src"/*/; do
+			mv "$dir" "$daily_dir/directories/" ||
+				echo "WARNING: Failed to move directory: $dir" >&2
+		done
+	done
 }
 
-#Begin file moves 
+# Move files matching extensions in a given array to a target category directory
+move_files() {
+	local -n extensions=$1
+	local category=$2
+
+	for ext in "${extensions[@]}"; do
+		for src in "${source_dirs[@]}"; do
+			local -a files=("$src/"*."$ext")
+			if [[ ${#files[@]} -gt 0 ]]; then
+				mv "${files[@]}" "$daily_dir/$category/" ||
+					echo "WARNING: Failed to move .$ext files from $src" >&2
+			fi
+		done
+	done
+}
+
 init_backup() {
-#Find and move binary files as defined in the binaries variable
-    for i in "${binaries[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/binaries/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/binaries/ 2> /dev/null
-    done
-
-#Find and move audio files as defined in the audio variable
-    for i in "${audio[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/audio/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/audio/ 2> /dev/null
-    done
-
-#Find and move video files as defined in the videos variable
-    for i in "${video[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/video/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/video/ 2> /dev/null
-    done
-
-#Find and move archive files as defined in the archives variable
-    for i in "${archives[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/archives/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/archives/ 2> /dev/null
-    done
-
-#Find and move text files as defined in the text variable
-    for i in "${text[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/text/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/text/ 2> /dev/null
-    done
-
-#Find and move 3d files as defined in the three_dee variable
-    for i in "${three_dee[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/three_dee/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/three_dee/ 2> /dev/null
-    done
-
-#Find and move image files as defined in the images variable
-    for i in "${images[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/images/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/images/ 2> /dev/null
-    done
-
-#Find and move utility files as defined in the utilities variable
-    for i in "${utilities[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
-    done
-
-#Find and move virtual machine files as defined in the utilities variable
-    for i in "${virtual_machines[@]}"; do
-        mv "$user_location/Downloads/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
-        mv "$user_location/Desktop/"*."${i}" "$archive_location"/"$date"/utilities/ 2> /dev/null
-    done
+	for cat in "${categories[@]}"; do
+		[[ "$cat" == "web" || "$cat" == "directories" ]] && continue
+		move_files "$cat" "$cat"
+	done
 }
 
+validate
 init_transform
 stage_backup
 init_web_backup
