@@ -1,4 +1,9 @@
 #!/bin/bash
+# Check before renaming files, moving directories, or terminating browsers.
+if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3))); then
+	echo "ERROR: Bash 4.3+ is required. Run this script with a modern Bash, not macOS /bin/bash." >&2
+	exit 1
+fi
 set -euo pipefail
 shopt -s nullglob nocaseglob
 
